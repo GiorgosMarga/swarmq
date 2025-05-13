@@ -5,6 +5,7 @@ const (
 	Pub
 	Join
 	Sub
+	Close
 )
 
 type SubMessage struct {

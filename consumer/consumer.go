@@ -3,7 +3,6 @@ package consumer
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"math/rand"
 	"net"
 
@@ -64,7 +63,7 @@ func (c *Consumer) Join(groupId string, topicIds []string) error {
 	return c.sendMessage(b.Bytes())
 }
 
-func (c *Consumer) Read(partition int, offset int, max int) error {
+func (c *Consumer) Read(partition int, offset int, max int) ([][]byte, error) {
 	b := new(bytes.Buffer)
 
 	binary.Write(b, binary.BigEndian, uint16(messages.Sub))
@@ -84,7 +83,7 @@ func (c *Consumer) Read(partition int, offset int, max int) error {
 	binary.Write(b, binary.BigEndian, uint16(max))
 
 	if err := c.sendMessage(b.Bytes()); err != nil {
-		return err
+		return nil, err
 	}
 
 	var (
@@ -103,8 +102,29 @@ func (c *Consumer) Read(partition int, offset int, max int) error {
 		data[i] = d
 	}
 
-	for _, d := range data {
-		fmt.Println(string(d))
+	return data, nil
+}
+
+func (c *Consumer) Close() error {
+
+	b := new(bytes.Buffer)
+	binary.Write(b, binary.BigEndian, uint16(messages.Close))
+	binary.Write(b, binary.BigEndian, c.id)
+	binary.Write(b, binary.BigEndian, uint16(len(c.groupId)))
+	binary.Write(b, binary.BigEndian, []byte(c.groupId))
+
+	binary.Write(b, binary.BigEndian, uint16(len(c.topicIds)))
+	for _, topicId := range c.topicIds {
+		binary.Write(b, binary.BigEndian, uint16(len(topicId)))
+		binary.Write(b, binary.BigEndian, []byte(topicId))
+	}
+
+	if err := c.sendMessage(b.Bytes()); err != nil {
+		return err
+	}
+
+	if err := c.conn.Close(); err != nil {
+		return err
 	}
 	return nil
 }

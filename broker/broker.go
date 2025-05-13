@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	groupmanager "github.com/GiorgosMarga/swarmq/groupManager"
 	"github.com/GiorgosMarga/swarmq/messages"
+	"github.com/GiorgosMarga/swarmq/partition"
 )
 
 var (
@@ -20,18 +22,18 @@ var (
 )
 
 type Broker struct {
-	topics    map[string]*PartitionManager
+	topics    map[string]*partition.PartitionManager
 	Transport *Transport
-	groups    map[string]*GroupManager
+	groups    map[string]*groupmanager.GroupManager
 }
 
 func NewBroker(brokerAddr string) *Broker {
 	return &Broker{
-		topics:    make(map[string]*PartitionManager),
+		topics:    make(map[string]*partition.PartitionManager),
 		Transport: NewTransport(brokerAddr),
 
 		// map[groupid]map[topicId][offset1(par1),offset2(par2),offset3(par3)]
-		groups: make(map[string]*GroupManager),
+		groups: make(map[string]*groupmanager.GroupManager),
 	}
 }
 func (b *Broker) splitName(n string) (string, int) {
@@ -97,7 +99,7 @@ func (b *Broker) addTopic(topicKey string, numOfPartitions int) {
 		return
 	}
 
-	b.topics[topicKey] = NewPartitionManager(numOfPartitions, topicKey)
+	b.topics[topicKey] = partition.NewPartitionManager(numOfPartitions, topicKey)
 	fmt.Printf("Added (%s) with (%d) partitions.\n", topicKey, numOfPartitions)
 
 	dirName := fmt.Sprintf("data/%s_%d", topicKey, numOfPartitions)
@@ -162,18 +164,38 @@ func (b *Broker) Start() {
 			go b.handleJoinMessage(buf)
 		case messages.Sub:
 			go b.handleReadMessage(buf)
+		case messages.Close:
+			go b.handleCloseMessage(buf)
 		default:
 			fmt.Println("Unknown")
 		}
 
 	}
 }
-func (b *Broker) handleExitMessage(buf *bytes.Buffer) error {
+func (b *Broker) handleCloseMessage(buf *bytes.Buffer) error {
 	fmt.Println("Handling exit message")
-	var consumerId uint16
-	binary.Read(buf, binary.BigEndian, &consumerId)
-	fmt.Println("Consumer id", consumerId)
 
+	var (
+		consumerId  uint16
+		groupIdLen  uint16
+		topicIds    uint16
+		topicKeyLen uint16
+	)
+	binary.Read(buf, binary.BigEndian, &consumerId)
+	binary.Read(buf, binary.BigEndian, &groupIdLen)
+	groupId := make([]byte, groupIdLen)
+	binary.Read(buf, binary.BigEndian, &groupId)
+
+	binary.Read(buf, binary.BigEndian, &topicIds)
+	for range topicIds {
+		binary.Read(buf, binary.BigEndian, &topicKeyLen)
+		topicKey := make([]byte, topicKeyLen)
+		binary.Read(buf, binary.BigEndian, &topicKey)
+		if err := b.leaveTopic(int(consumerId), string(topicKey), string(groupId)); err != nil {
+			return err
+		}
+	}
+	fmt.Println("Consumer", consumerId, "left group", string(groupId))
 	return nil
 }
 func (b *Broker) handleJoinMessage(buf *bytes.Buffer) error {
@@ -219,12 +241,23 @@ func (b *Broker) joinTopic(consumerId int, topicKey, groupId string) error {
 	topicGroupId := fmt.Sprintf("%s_%s", topicKey, groupId)
 
 	if _, ok := b.groups[topicGroupId]; !ok {
-		b.groups[topicGroupId] = NewGroupManager(partitionManager.numOfPartitions)
+		b.groups[topicGroupId] = groupmanager.NewGroupManager(partitionManager.NumOfPartitions)
 	}
 
-	b.groups[topicGroupId].addConsumer(consumerId)
+	b.groups[topicGroupId].AddConsumer(consumerId)
 	return nil
 }
+func (b *Broker) leaveTopic(consumerId int, topicKey, groupId string) error {
+	topicGroupId := fmt.Sprintf("%s_%s", topicKey, groupId)
+	groupManager, ok := b.groups[topicGroupId]
+	if !ok {
+		return ErrTopicNotFound
+	}
+
+	groupManager.RemoveConsumer(consumerId)
+	return nil
+}
+
 func (b *Broker) handleCreateTopicMessage(buf *bytes.Buffer) error {
 	var topicKeyLen uint16
 	binary.Read(buf, binary.BigEndian, &topicKeyLen)
@@ -290,16 +323,16 @@ func (b *Broker) handleReadMessage(buf *bytes.Buffer) error {
 	if partition == -1 {
 		groupManager, ok := b.groups[id]
 		if !ok {
-			return ErrNoConsumer
+			return groupmanager.ErrNoConsumer
 		}
-		partitions, err := groupManager.getPartitionsFromConsumerId(int(consumerId))
+		partitions, err := groupManager.GetPartitionsFromConsumerId(int(consumerId))
 		if err != nil {
-			fmt.Println("Error:", err)
+			fmt.Println("Error:", err, consumerId)
 			return err
 		}
 		data := make([][]byte, 0)
 		for _, partition := range partitions {
-			offset, err := groupManager.getOffsetFromPartition(partition)
+			offset, err := groupManager.GetOffsetFromPartition(partition)
 			if err != nil {
 				continue
 			}
@@ -308,14 +341,14 @@ func (b *Broker) handleReadMessage(buf *bytes.Buffer) error {
 			if err != nil {
 				continue
 			}
-			groupManager.updateOffset(partition, int(max))
+			groupManager.UpdateOffset(partition, int(max), true)
 			data = append(data, d...)
 		}
 		return b.sendData(consumerId, data)
 	}
 
 	if offset == -1 {
-		offset, err = b.groups[id].getOffsetFromPartition(int(partition))
+		offset, err = b.groups[id].GetOffsetFromPartition(int(partition))
 		if err != nil {
 			return err
 		}

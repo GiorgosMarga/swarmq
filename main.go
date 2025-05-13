@@ -47,11 +47,12 @@ func main() {
 		}
 
 		time.Sleep(500 * time.Millisecond)
-		for i := range producerValues {
+		for range producerValues {
 			sleepTime := rand.Intn(10)
+			id := rand.Intn(1024)
 			time.Sleep(time.Duration(sleepTime) * time.Second)
-			key := fmt.Sprintf("key_%d", i)
-			val := fmt.Sprintf("val_%d", i)
+			key := fmt.Sprintf("key_%d", id)
+			val := fmt.Sprintf("val_%d", id)
 			if err := prd.Pub(topicId, key, []byte(val)); err != nil {
 				fmt.Println(err)
 			}
@@ -69,9 +70,18 @@ func main() {
 		time.Sleep(100 * time.Millisecond)
 		for {
 			sleepTime := rand.Intn(10)
+			if sleepTime == 5 {
+				c.Close()
+				fmt.Println("Closed connection")
+				break
+			}
 			time.Sleep(time.Duration(sleepTime) * time.Second)
-			if err := c.Read(-1, -1, 1); err != nil {
+			b, err := c.Read(-1, -1, 1)
+			if err != nil {
 				log.Fatal(err)
+			}
+			for _, d := range b {
+				fmt.Println(string(d))
 			}
 		}
 	}
