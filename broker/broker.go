@@ -168,7 +168,14 @@ func (b *Broker) Start() {
 
 	}
 }
+func (b *Broker) handleExitMessage(buf *bytes.Buffer) error {
+	fmt.Println("Handling exit message")
+	var consumerId uint16
+	binary.Read(buf, binary.BigEndian, &consumerId)
+	fmt.Println("Consumer id", consumerId)
 
+	return nil
+}
 func (b *Broker) handleJoinMessage(buf *bytes.Buffer) error {
 	fmt.Println("Handling join message")
 

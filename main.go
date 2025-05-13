@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"time"
 
 	"github.com/GiorgosMarga/swarmq/broker"
@@ -47,11 +48,14 @@ func main() {
 
 		time.Sleep(500 * time.Millisecond)
 		for i := range producerValues {
+			sleepTime := rand.Intn(10)
+			time.Sleep(time.Duration(sleepTime) * time.Second)
 			key := fmt.Sprintf("key_%d", i)
 			val := fmt.Sprintf("val_%d", i)
 			if err := prd.Pub(topicId, key, []byte(val)); err != nil {
 				fmt.Println(err)
 			}
+			fmt.Println("Published", key, val)
 		}
 	case "consumer":
 		c, err := consumer.NewConsumer(brokerAddr)
@@ -63,8 +67,12 @@ func main() {
 		}
 
 		time.Sleep(100 * time.Millisecond)
-		if err := c.Read(-1, -1, 1); err != nil {
-			log.Fatal(err)
+		for {
+			sleepTime := rand.Intn(10)
+			time.Sleep(time.Duration(sleepTime) * time.Second)
+			if err := c.Read(-1, -1, 1); err != nil {
+				log.Fatal(err)
+			}
 		}
 	}
 
